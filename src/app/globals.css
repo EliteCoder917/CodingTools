@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-ink-950 text-zinc-200 antialiased;
+    background-image:
+      radial-gradient(60rem 60rem at 85% -10%, rgba(225, 29, 72, 0.18), transparent 60%),
+      radial-gradient(50rem 50rem at 0% 0%, rgba(190, 18, 60, 0.12), transparent 55%),
+      radial-gradient(40rem 40rem at 50% 120%, rgba(244, 63, 94, 0.1), transparent 60%);
+    background-attachment: fixed;
+  }
+  ::selection {
+    @apply bg-blood-600/40 text-white;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blood-500/60 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-gradient-to-b from-blood-500 to-blood-700 text-white shadow-glow hover:from-blood-400 hover:to-blood-600;
+  }
+  .btn-ghost {
+    @apply btn border border-white/10 bg-white/5 text-zinc-200 hover:border-blood-500/40 hover:bg-white/10;
+  }
+  .input {
+    @apply w-full rounded-lg border border-white/10 bg-ink-900/70 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 transition focus:border-blood-500/60 focus:outline-none focus:ring-2 focus:ring-blood-500/30;
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-zinc-400;
+  }
+  .card {
+    @apply rounded-xl border border-white/10 bg-ink-900/60 backdrop-blur-sm;
+  }
+}
+
+/* highlight.js — custom red/black theme */
+.hljs {
+  color: #e7e3e4;
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote {
+  color: #6b5b5e;
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name {
+  color: #ff6b81;
+}
+.hljs-string,
+.hljs-attr,
+.hljs-template-variable {
+  color: #f0a8b0;
+}
+.hljs-number,
+.hljs-literal {
+  color: #ff8fa3;
+}
+.hljs-function .hljs-title,
+.hljs-title,
+.hljs-section {
+  color: #ffd0d6;
+}
+.hljs-params {
+  color: #d8c7ca;
+}
+.hljs-meta,
+.hljs-decorator {
+  color: #e11d48;
+}
+.hljs-type {
+  color: #ff9aa8;
+}
