@@ -1,68 +1,19 @@
 -- =============================================================================
--- PythonTools — Supabase / Postgres schema (full / fresh install)
+-- Migration 0002 — multi-file posts, full-text search, profiles/edit/delete
 -- =============================================================================
--- Run this in the Supabase SQL Editor (Dashboard -> SQL Editor -> New query)
--- or via the Supabase CLI. It is idempotent and safe to re-run.
---
--- This is the complete, current schema. If you set up an EARLIER single-file
--- version of the app, run supabase/migrations/0002_multifile_search_profiles.sql
--- instead to upgrade in place without losing data.
---
--- NOTE ON AUTH: This app does NOT use Supabase Auth. Authentication is handled
--- by the Next.js server, which hashes passwords with bcrypt and stores the
--- resulting hash in users.password_hash. The server talks to these tables using
--- the service_role key, which bypasses Row Level Security. RLS is still enabled
--- below as a defense-in-depth measure so the anon/public key cannot read or
--- write these tables directly.
---
--- WHERE DATA LIVES: ALL persistent data — user accounts, posts, and every
--- uploaded/pasted script — is stored ONLY in these Postgres tables. Nothing
--- sensitive is kept in the browser: no passwords, no emails (none are
--- collected), no profile data. The only thing the browser holds is a single
--- httpOnly, signed session cookie (`pt_session`) that JavaScript cannot read.
+-- Run this AFTER schema.sql, in the Supabase SQL Editor. It is idempotent and
+-- safe to re-run. It:
+--   * adds a post_files table so one post can hold several Python scripts, each
+--     with a name and a subtitle describing how it contributes to the post
+--   * migrates any existing single posts.code value into a post_files row, then
+--     drops posts.code
+--   * adds full-text search (indexed GIN tsvector) over title + description
+--   * adds posts.file_count (trigger-maintained, indexed) for fast filtering
+--   * adds atomic create/update RPCs so a post and its files change together
 -- =============================================================================
 
--- Needed for gen_random_uuid()
-create extension if not exists "pgcrypto";
-
 -- -----------------------------------------------------------------------------
--- users
--- -----------------------------------------------------------------------------
-create table if not exists public.users (
-    id            uuid primary key default gen_random_uuid(),
-    username      text not null check (char_length(username) between 3 and 32),
-    password_hash text not null,           -- bcrypt hash, never the raw password
-    created_at    timestamptz not null default now()
-);
-
--- Case-insensitive uniqueness on username so "Alice" and "alice" can't both exist.
-create unique index if not exists users_username_lower_key
-    on public.users (lower(username));
-
--- -----------------------------------------------------------------------------
--- posts — title + description; the code lives in post_files (one or more)
--- -----------------------------------------------------------------------------
-create table if not exists public.posts (
-    id          uuid primary key default gen_random_uuid(),
-    author_id   uuid not null references public.users (id) on delete cascade,
-    title       text not null check (char_length(title) between 3 and 120),
-    description text not null default '' check (char_length(description) <= 5000),
-    file_count  int  not null default 0,   -- trigger-maintained; powers fast filtering
-    created_at  timestamptz not null default now(),
-    -- Full-text search over title (weight A) + description (weight B).
-    search_vector tsvector generated always as (
-        setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
-        setweight(to_tsvector('english', coalesce(description, '')), 'B')
-    ) stored
-);
-
-create index if not exists posts_author_id_idx  on public.posts (author_id);
-create index if not exists posts_created_at_idx  on public.posts (created_at desc);
-create index if not exists posts_file_count_idx  on public.posts (file_count);
-create index if not exists posts_search_idx      on public.posts using gin (search_vector);
-
--- -----------------------------------------------------------------------------
--- post_files — the individual scripts that make up a post
+-- post_files: the individual scripts that make up a post
 -- -----------------------------------------------------------------------------
 create table if not exists public.post_files (
     id         uuid primary key default gen_random_uuid(),
@@ -77,7 +28,48 @@ create table if not exists public.post_files (
     created_at timestamptz not null default now()
 );
 
-create index if not exists post_files_post_id_idx on public.post_files (post_id, position);
+-- Fast lookup + ordering of a post's files.
+create index if not exists post_files_post_id_idx
+    on public.post_files (post_id, position);
+
+alter table public.post_files enable row level security;
+
+-- -----------------------------------------------------------------------------
+-- posts.file_count — denormalized count for O(log n) "single vs multi-file" filter
+-- -----------------------------------------------------------------------------
+alter table public.posts add column if not exists file_count int not null default 0;
+
+-- -----------------------------------------------------------------------------
+-- Migrate the old single posts.code column into post_files, then drop it.
+-- -----------------------------------------------------------------------------
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'posts' and column_name = 'code'
+  ) then
+    insert into public.post_files (post_id, position, name, note, content)
+    select p.id, 0, 'script.py', '', p.code
+    from public.posts p
+    where p.code is not null
+      and char_length(p.code) > 0
+      and not exists (select 1 from public.post_files f where f.post_id = p.id);
+
+    alter table public.posts drop column code;
+  end if;
+end $$;
+
+-- -----------------------------------------------------------------------------
+-- Full-text search over title (weight A) + description (weight B), GIN-indexed.
+-- -----------------------------------------------------------------------------
+alter table public.posts add column if not exists search_vector tsvector
+    generated always as (
+        setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
+        setweight(to_tsvector('english', coalesce(description, '')), 'B')
+    ) stored;
+
+create index if not exists posts_search_idx on public.posts using gin (search_vector);
+create index if not exists posts_file_count_idx on public.posts (file_count);
 
 -- -----------------------------------------------------------------------------
 -- Keep posts.file_count in sync automatically.
@@ -98,12 +90,19 @@ create trigger post_files_count_trg
     after insert or delete on public.post_files
     for each row execute function public.sync_post_file_count();
 
+-- Backfill counts for any pre-existing rows.
+update public.posts p
+set file_count = (select count(*) from public.post_files f where f.post_id = p.id);
+
 -- -----------------------------------------------------------------------------
 -- Atomic create: insert a post and all of its files in one transaction.
 -- p_files is a JSON array of { name, note, content } objects (max 10).
 -- -----------------------------------------------------------------------------
 create or replace function public.create_post_with_files(
-    p_author uuid, p_title text, p_description text, p_files jsonb
+    p_author      uuid,
+    p_title       text,
+    p_description text,
+    p_files       jsonb
 ) returns uuid language plpgsql as $$
 declare
   v_post_id uuid;
@@ -125,7 +124,8 @@ begin
   loop
     insert into public.post_files (post_id, position, name, note, content)
     values (
-      v_post_id, v_pos,
+      v_post_id,
+      v_pos,
       coalesce(nullif(v_file->>'name', ''), 'script.py'),
       coalesce(v_file->>'note', ''),
       v_file->>'content'
@@ -138,11 +138,15 @@ end $$;
 
 -- -----------------------------------------------------------------------------
 -- Atomic update: owner-checked. Replaces the post's files wholesale.
--- Returns true on success, false if the post does not exist; raises if the
+-- Returns true on success, false if the post does not exist. Raises if the
 -- caller is not the author.
 -- -----------------------------------------------------------------------------
 create or replace function public.update_post_with_files(
-    p_post uuid, p_author uuid, p_title text, p_description text, p_files jsonb
+    p_post        uuid,
+    p_author      uuid,
+    p_title       text,
+    p_description text,
+    p_files       jsonb
 ) returns boolean language plpgsql as $$
 declare
   v_owner uuid;
@@ -163,14 +167,18 @@ begin
     raise exception 'too many files (max 10)';
   end if;
 
-  update public.posts set title = p_title, description = p_description where id = p_post;
+  update public.posts
+  set title = p_title, description = p_description
+  where id = p_post;
+
   delete from public.post_files where post_id = p_post;
 
   for v_file in select * from jsonb_array_elements(p_files)
   loop
     insert into public.post_files (post_id, position, name, note, content)
     values (
-      p_post, v_pos,
+      p_post,
+      v_pos,
       coalesce(nullif(v_file->>'name', ''), 'script.py'),
       coalesce(v_file->>'note', ''),
       v_file->>'content'
@@ -180,12 +188,3 @@ begin
 
   return true;
 end $$;
-
--- -----------------------------------------------------------------------------
--- Row Level Security — enabled with NO policies, so the anon/public key is
--- denied all direct access. The Next.js server uses the service_role key,
--- which bypasses RLS entirely.
--- -----------------------------------------------------------------------------
-alter table public.users      enable row level security;
-alter table public.posts      enable row level security;
-alter table public.post_files enable row level security;

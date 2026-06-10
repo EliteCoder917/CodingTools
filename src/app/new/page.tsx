@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { NewPostForm } from "@/components/NewPostForm";
+import { PostEditor } from "@/components/PostEditor";
 import { getSession } from "@/lib/auth";
 
 export default async function NewPostPage() {
@@ -16,9 +16,7 @@ export default async function NewPostPage() {
           Posting as <span className="text-blood-400">@{session.username}</span>
         </p>
       </div>
-      <div className="card p-6">
-        <NewPostForm />
-      </div>
+      <PostEditor mode="create" />
     </div>
   );
 }

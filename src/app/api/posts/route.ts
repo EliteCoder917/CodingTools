@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { createPost } from "@/lib/db";
+import { createPostWithFiles } from "@/lib/db";
 import { getSession } from "@/lib/auth";
+import { validatePostPayload } from "@/lib/validatePost";
 
 export async function POST(req: Request) {
   const session = await getSession();
@@ -15,51 +16,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const { title, description, code } = (body ?? {}) as {
-    title?: unknown;
-    description?: unknown;
-    code?: unknown;
-  };
-
-  if (typeof title !== "string" || typeof code !== "string") {
-    return NextResponse.json(
-      { error: "Title and code are required." },
-      { status: 400 },
-    );
+  const result = validatePostPayload(body);
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: 400 });
   }
 
-  const cleanTitle = title.trim();
-  const cleanDescription =
-    typeof description === "string" ? description.trim() : "";
-
-  if (cleanTitle.length < 3 || cleanTitle.length > 120) {
-    return NextResponse.json(
-      { error: "Title must be 3–120 characters." },
-      { status: 400 },
-    );
-  }
-  if (cleanDescription.length > 5000) {
-    return NextResponse.json(
-      { error: "Description is too long (5000 char max)." },
-      { status: 400 },
-    );
-  }
-  if (code.trim().length === 0) {
-    return NextResponse.json({ error: "Code cannot be empty." }, { status: 400 });
-  }
-  if (code.length > 100_000) {
-    return NextResponse.json(
-      { error: "Code is too long (100k char max)." },
-      { status: 400 },
-    );
-  }
-
-  const post = await createPost({
+  const id = await createPostWithFiles({
     authorId: session.userId,
-    title: cleanTitle,
-    description: cleanDescription,
-    code,
+    ...result.value,
   });
 
-  return NextResponse.json({ id: post.id });
+  return NextResponse.json({ id });
 }

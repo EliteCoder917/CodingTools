@@ -15,14 +15,23 @@ export function Navbar({ username }: { username: string | null }) {
         </Link>
 
         <nav className="flex items-center gap-2">
+          <Link
+            href="/browse"
+            className="hidden px-2 text-sm text-zinc-300 hover:text-blood-300 sm:inline"
+          >
+            Browse
+          </Link>
           {username ? (
             <>
+              <Link
+                href="/profile"
+                className="hidden px-2 text-sm text-zinc-300 hover:text-blood-300 sm:inline"
+              >
+                @{username}
+              </Link>
               <Link href="/new" className="btn-primary">
                 + New snippet
               </Link>
-              <span className="hidden text-sm text-zinc-400 sm:inline">
-                @{username}
-              </span>
               <LogoutButton />
             </>
           ) : (

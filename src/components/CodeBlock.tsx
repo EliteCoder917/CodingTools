@@ -6,7 +6,13 @@ import python from "highlight.js/lib/languages/python";
 
 hljs.registerLanguage("python", python);
 
-export function CodeBlock({ code }: { code: string }) {
+export function CodeBlock({
+  code,
+  filename = "python",
+}: {
+  code: string;
+  filename?: string;
+}) {
   const ref = useRef<HTMLElement>(null);
   const [copied, setCopied] = useState(false);
 
@@ -34,7 +40,7 @@ export function CodeBlock({ code }: { code: string }) {
           <span className="h-3 w-3 rounded-full bg-blood-600/80" />
           <span className="h-3 w-3 rounded-full bg-blood-500/40" />
           <span className="h-3 w-3 rounded-full bg-blood-400/20" />
-          <span className="ml-2 font-mono text-xs text-zinc-500">python</span>
+          <span className="ml-2 font-mono text-xs text-zinc-500">{filename}</span>
         </div>
         <button onClick={copy} className="btn-ghost px-2 py-1 text-xs">
           {copied ? "Copied ✓" : "Copy"}
